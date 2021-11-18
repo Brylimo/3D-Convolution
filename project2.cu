@@ -4,8 +4,11 @@
 int main(int argc, char* argv[])
 {
 	FILE *fp, *fp2, *fp3;
-	char input[255], kernel[255], output[255];
-	int i, j, k, in_size[3], out_size[3], kernel_size;
+	
+	float* IN, *IN_c, *kernel, *OUT, *OUT_c;//matrix
+	int in_row, in_col, in_dep;
+	int out_row, out_col, out_dep;
+	int kernel_row, kernel_col, kernel_dep;
 
 	if (argc != 4) {
 		printf("Usage: ./singlethread <input.txt> <kernel.txt> <output.txt>\n");
@@ -37,5 +40,6 @@ int main(int argc, char* argv[])
 		fclose(fp2);
 		fclose(fp3);
 	}
+
 	return 0;
 }
