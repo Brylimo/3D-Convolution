@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <pthread.h>
 #include <immintrin.h>
 #include <stdint.h>
 #include <x86intrin.h>
@@ -124,7 +125,7 @@ float* conv(Container* in, Kernel* ker)
 				}
 				ans[i*height*width+j*width+a] = sum;
 				sum = 0.000000;
-			} 
+			}
 		}
 	}
 	return ans;
