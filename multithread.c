@@ -6,10 +6,15 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include "Queue.h"
 
 #define ARRAY_LENGTH 8
 #define ABS(X) ((X) < 0 ? -(X) : (X))
-#define E 0.0001 // need to ask about it
+#define E 0.0001
+
+void* workerThread(void *arg);
+
 typedef struct __container
 {
 	int zp, yp, xp; // real
@@ -23,6 +28,24 @@ typedef struct __kernel
 	int size;
 	float *matrix;
 } Kernel;
+
+typedef struct __threadpool {
+	int alive;
+	int num_threads;
+	pthread_t* pool;
+} ThreadPool;
+
+Container in, out;
+Kernel ker;
+Queue buffer;
+pthread_mutex_t lock;
+pthread_mutex_t lock1;
+pthread_mutex_t lock2;
+pthread_mutex_t lock3;
+pthread_mutex_t lock4;
+pthread_cond_t signal;
+float* ans;
+int count = 0;
 
 int f_equal(float x, float y) // 부동소수점 근사값 계산 함수
 {
@@ -64,82 +87,150 @@ void kernel_destructor(Kernel *kernel)
 	free(kernel->matrix);
 }
 
-float* conv(Container* in, Kernel* ker)
+ThreadPool* thread_pool_constructor(int num_threads)
 {
-	float* ans = (float*)malloc(sizeof(float)*in->zp*in->yp*in->xp);
-	float* vector_in = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
-	float* vector_ker = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
-	float* vsum = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
-	float zero = 0.000000, sum =0.000000;
-	int i,j,k,l,m,a,size;
-	int height = in->yp;
-       	int width = in->xp;
-        int depth = in->zp;
-	__m256 result;
+        ThreadPool* thread_pool = (ThreadPool *)malloc(sizeof(ThreadPool));
+        thread_pool->num_threads = num_threads;
+	thread_pool->alive = 0;
+        thread_pool->pool = (pthread_t*)malloc(sizeof(pthread_t[num_threads]));
 
-	if (ker->size > ARRAY_LENGTH)	size = ARRAY_LENGTH;	
-	else	size = ker->size; 
-	
-	for (i=0;(ker->size + i) <= in->z;i++)
+        for (int i = 0; i < num_threads; i++)
+        {
+		pthread_create(&thread_pool->pool[i], NULL, workerThread, (void*)thread_pool);
+        }
+        return thread_pool;
+}
+
+void thread_pool_destructor(ThreadPool * thread_pool)
+{
+	thread_pool->alive = 1;
+	pthread_cond_signal(&signal);
+
+        for (int i = 0; i < thread_pool->num_threads; i++)
+        {
+                int rc = pthread_join(thread_pool->pool[i], NULL);
+                if (rc) {
+                        printf("Error; return code from pthread_join() is %d\n", rc);
+                        exit(-1);
+                }
+        }
+        free(thread_pool->pool);
+}
+
+void multiThread()
+{
+	int total = in.xp * in.yp * in.zp, t, rc, start_row, start_col, start_dep;
+
+	for (t=0; t < total; t++)
 	{
-		for (j=0;(ker->size + j) <= in->y;j++)
+		Block* block = (Block*)malloc(sizeof(Block));
+		block->start_row = t % in.xp;
+		block->start_col = (t % (in.xp*in.yp)) / in.xp;
+		block->start_dep = t / (in.xp*in.yp);
+		block->num = t;
+
+		pthread_mutex_lock(&lock3);
+		if (IsQueueEmpty(&buffer))
 		{
-			for (a=0;(ker->size + a) <= in->x;a++){
-				result = _mm256_broadcast_ss(&zero);
-				for(l=0;l<ker->size;l++) // 3D CONVOLUTION FOR ONE BLOCK
+			enqueue(&buffer, block);
+			pthread_cond_signal(&signal);
+		} else {
+			pthread_mutex_lock(&lock);
+			enqueue(&buffer, block);
+			pthread_mutex_unlock(&lock);
+		}
+		pthread_mutex_unlock(&lock3);
+	}
+
+	while (count != total) {}
+}
+
+void* workerThread(void *arg)
+{
+	ThreadPool* thread_pool = (ThreadPool*)arg;
+	Block* block;
+	
+	while (!thread_pool->alive)
+	{
+		pthread_mutex_lock(&lock1);
+		if (IsQueueEmpty(&buffer) && !thread_pool->alive) {
+			pthread_cond_wait(&signal, &lock2);
+			if (!thread_pool->alive)
+				block = dequeue(&buffer);
+		} else {
+			pthread_mutex_lock(&lock);
+			block = dequeue(&buffer);
+			pthread_mutex_unlock(&lock);
+		}
+		pthread_mutex_unlock(&lock1);
+
+		if (!thread_pool->alive) {
+			int l, m, k, size, height=in.yp, width=in.xp, depth=in.zp;
+			float* vector_in = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
+			float* vector_ker = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
+			float* vsum = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
+			float zero = 0.000000, sum = 0.000000;
+			__m256 result = _mm256_broadcast_ss(&zero);
+
+			if (ker.size > ARRAY_LENGTH)	size = ARRAY_LENGTH;	
+			else	size = ker.size;
+
+			for(l=0;l<ker.size;l++)
+			{
+				for(m=0;m<ker.size;m++)
 				{
-					for(m=0;m<ker->size;m++)
-					{
-						if (size == ARRAY_LENGTH) { // need to check
-							int sub = ker->size;
-							for(k=0;(sub=(sub-ARRAY_LENGTH))>0;k++)
-							{
-								memcpy(vector_in, &in->matrix[((i+l)*in->y*in->x)+((j+m)*in->x)+a+k*ARRAY_LENGTH], sizeof(float)*size);
-								memcpy(vector_ker, &ker->matrix[l*ker->size*ker->size+m*ker->size+k*ARRAY_LENGTH], sizeof(float)*size);
-								__m256 vin = _mm256_load_ps(vector_in);
-								__m256 vker = _mm256_load_ps(vector_ker);	
-								result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
-								if (sub < ARRAY_LENGTH) break;	
-							}
-							if (sub < ARRAY_LENGTH && sub > 0) {
-								size = sub;
-								memcpy(vector_in, &in->matrix[((i+l)*in->y*in->x)+((j+m)*in->x)+a], sizeof(float)*size);
-								memcpy(vector_ker, &ker->matrix[l*ker->size*ker->size+m*ker->size], sizeof(float)*size);
-								__m256 vin = _mm256_load_ps(vector_in);
-								__m256 vker = _mm256_load_ps(vector_ker);	
-								result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
-							}
-						} else {
-							memcpy(vector_in, &in->matrix[((i+l)*in->y*in->x)+((j+m)*in->x)+a], sizeof(float)*size);
-							memcpy(vector_ker, &ker->matrix[l*ker->size*ker->size+m*ker->size], sizeof(float)*size);
+					if (size == ARRAY_LENGTH) {
+						int sub = ker.size;
+						for(k=0;(sub=(sub-ARRAY_LENGTH))>0;k++)
+						{
+							memcpy(vector_in, &in.matrix[((block->start_dep+l)*in.y*in.x)+((block->start_col+m)*in.x)+block->start_row+k*ARRAY_LENGTH], sizeof(float)*size);
+							memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size+k*ARRAY_LENGTH], sizeof(float)*size);
 							__m256 vin = _mm256_load_ps(vector_in);
 							__m256 vker = _mm256_load_ps(vector_ker);	
 							result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
-						}		
-					}
+							if (sub < ARRAY_LENGTH) break;	
+						}
+						if (sub < ARRAY_LENGTH && sub > 0) {
+							size = sub;
+							memcpy(vector_in, &in.matrix[((block->start_dep+l)*in.y*in.x)+((block->start_col+m)*in.x)+block->start_row], sizeof(float)*size);
+							memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size], sizeof(float)*size);
+							__m256 vin = _mm256_load_ps(vector_in);
+							__m256 vker = _mm256_load_ps(vector_ker);	
+							result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
+						}
+					} else {
+						memcpy(vector_in, &in.matrix[((block->start_dep+l)*in.y*in.x)+((block->start_col+m)*in.x)+block->start_row], sizeof(float)*size);
+						memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size], sizeof(float)*size);
+						__m256 vin = _mm256_load_ps(vector_in);
+						__m256 vker = _mm256_load_ps(vector_ker);	
+						result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
+					}		
 				}
-				_mm256_store_ps(vsum, result);
-				for (m=0;m<ARRAY_LENGTH;m++)
-				{	
-					sum+=vsum[m];
-				}
-				ans[i*height*width+j*width+a] = sum;
-				sum = 0.000000;
 			}
+
+			_mm256_store_ps(vsum, result);
+			for (m=0;m<ARRAY_LENGTH;m++)
+			{	
+				sum+=vsum[m];
+			}
+			ans[block->num] = sum;
+			pthread_mutex_lock(&lock4);
+			count++;
+			pthread_mutex_unlock(&lock4);
 		}
 	}
-	return ans;
+	return NULL;
 }
 
 int main(int argc, char* argv[])
 {
 	FILE *fp, *fp2, *fp3;
 	char input[255], kernel[255], output[255];
-	Container in, out;
-	Kernel ker;
 	int i, j, k, in_size[3], out_size[3], kernel_size, flag=0;
 	uint64_t start, end;
-
+	ThreadPool* thread_pool;
+	printf("%d\n", _SC_THREAD_THREADS_MAX);
+	
 	if (argc != 4) {
 		printf("Usage: ./singlethread <input.txt> <kernel.txt> <output.txt>\n");
 		exit(0);
@@ -165,6 +256,15 @@ int main(int argc, char* argv[])
 			printf("File open failed\n");
 			exit(1);
 		}
+
+		pthread_mutex_init(&lock, NULL);
+		pthread_mutex_init(&lock1, NULL);
+		pthread_mutex_init(&lock2, NULL);
+		pthread_mutex_init(&lock3, NULL);
+		pthread_mutex_init(&lock4, NULL);
+		pthread_cond_init(&signal, NULL);
+		queueInit(&buffer);
+		thread_pool = thread_pool_constructor(10);
 
 		for (i = 0; i < 3; i++)
 		{
@@ -203,8 +303,15 @@ int main(int argc, char* argv[])
 		{
 			sscanf(output, "%f", &out.matrix[i]);
 		}
-		
-		float* ans = conv(&in, &ker);
+
+		ans = (float*)malloc(sizeof(float)*in.zp*in.yp*in.xp);
+		multiThread();
+
+		for (i = 0; i < 10; i++)
+		{
+			printf("a : %f\n", ans[i]);
+			printf("%f\n", out.matrix[i]);
+		}
 
 		for (i=0; i < in.zp*in.yp*in.xp; i++)
 		{
@@ -214,6 +321,7 @@ int main(int argc, char* argv[])
 				break;
 			}
 		}
+
 		if (!flag) {
 			printf("output.txt와 값이 동일합니다!\n");
 		} else {
@@ -224,5 +332,15 @@ int main(int argc, char* argv[])
 		fclose(fp2);
 		fclose(fp3);
 	}
+	thread_pool_destructor(thread_pool);
+	pthread_mutex_destroy(&lock);
+	pthread_mutex_destroy(&lock1);
+	pthread_mutex_destroy(&lock2);
+	pthread_mutex_destroy(&lock3);
+	pthread_mutex_destroy(&lock4);
+	pthread_cond_destroy(&signal);
+	container_destructor(&in);
+	container_destructor(&out);
+	kernel_destructor(&ker);
 	return 0;
 }

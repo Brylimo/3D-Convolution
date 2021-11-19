@@ -223,5 +223,9 @@ int main(int argc, char* argv[])
 		fclose(fp2);
 		fclose(fp3);
 	}
+
+	container_destructor(&in);
+	container_destructor(&out);
+	kernel_destructor(&ker);
 	return 0;
 }
