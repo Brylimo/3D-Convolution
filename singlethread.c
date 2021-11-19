@@ -5,7 +5,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
+#define CHECK(CALL)\
+  if ((CALL) < 0) {perror (#CALL); exit (EXIT_FAILURE);}
 #define ARRAY_LENGTH 8
 #define ABS(X) ((X) < 0 ? -(X) : (X))
 #define E 0.0001 // need to ask about it
@@ -136,8 +139,8 @@ int main(int argc, char* argv[])
 	char input[255], kernel[255], output[255];
 	Container in, out;
 	Kernel ker;
+	struct timeval start, stop;
 	int i, j, k, in_size[3], out_size[3], kernel_size, flag=0;
-	uint64_t start, end;
 
 	if (argc != 4) {
 		printf("Usage: ./singlethread <input.txt> <kernel.txt> <output.txt>\n");
@@ -203,7 +206,9 @@ int main(int argc, char* argv[])
 			sscanf(output, "%f", &out.matrix[i]);
 		}
 		
+		CHECK(gettimeofday(&start, NULL));
 		float* ans = conv(&in, &ker);
+		CHECK(gettimeofday(&stop, NULL));
 
 		for (i=0; i < in.zp*in.yp*in.xp; i++)
 		{
@@ -219,6 +224,8 @@ int main(int argc, char* argv[])
 			printf("output.txt와 값이 다릅니다!!!\n");
 		}
 
+		fprintf(stderr, "Elapsed time with single thread code = %f milliseconds\n",
+				(stop.tv_sec-start.tv_sec)*1000 + (stop.tv_usec-start.tv_usec)*0.001);
 		fclose(fp);
 		fclose(fp2);
 		fclose(fp3);
