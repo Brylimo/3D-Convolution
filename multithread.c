@@ -1,4 +1,4 @@
-#include <stdio.h>
+#include <stdio.h> 
 #include <pthread.h>
 #include <immintrin.h>
 #include <stdint.h>
@@ -8,13 +8,14 @@
 #include <string.h>
 #include <limits.h>
 #include <sys/time.h>
-#include "Queue.h"
+#include "Queue.h" 
 
 #define CHECK(CALL)\
   if ((CALL) < 0) {perror (#CALL); exit (EXIT_FAILURE);}
 #define ARRAY_LENGTH 8
 #define ABS(X) ((X) < 0 ? -(X) : (X))
 #define E 0.0001
+#define BLOCK_SIZE 18
 
 void* workerThread(void *arg);
 
@@ -36,7 +37,7 @@ typedef struct __threadpool {
 	int alive;
 	int num_threads;
 	pthread_t* pool;
-} ThreadPool;
+} ThreadPool; 
 
 Container in, out;
 Kernel ker;
@@ -50,7 +51,6 @@ pthread_cond_t signal;
 float* ans;
 int count = 0;
 struct timeval start, stop;
-
 
 int f_equal(float x, float y) // 부동소수점 근사값 계산 함수
 {
@@ -124,16 +124,24 @@ void thread_pool_destructor(ThreadPool * thread_pool)
 
 void multiThread()
 {
-	int total = in.xp * in.yp * in.zp, t, rc, start_row, start_col, start_dep;
-	
+	int total = in.xp * in.yp * in.zp, t, p, rc, start_row, start_col, start_dep;
+
 	CHECK(gettimeofday(&start, NULL));
-	for (t=0; t < total; t++)
+	for (t=0; t < total; t+=BLOCK_SIZE)
 	{
 		Block* block = (Block*)malloc(sizeof(Block));
-		block->start_row = t % in.xp;
-		block->start_col = (t % (in.xp*in.yp)) / in.xp;
-		block->start_dep = t / (in.xp*in.yp);
-		block->num = t;
+		for (p = 0; p < BLOCK_SIZE; p++)
+		{
+			if (t+p < total) {
+				block->start_row[p] = (t+p) % in.xp;
+				block->start_col[p] = ((t+p) % (in.xp*in.yp)) / in.xp;
+				block->start_dep[p] = (t+p) / (in.xp*in.yp);
+				block->num[p] = t+p;
+				block->pluto += 1;
+			} else {
+				break;
+			}
+		}
 
 		pthread_mutex_lock(&lock3);
 		if (IsQueueEmpty(&buffer))
@@ -148,7 +156,8 @@ void multiThread()
 		pthread_mutex_unlock(&lock3);
 	}
 
-	while (count != total) {}
+	while (count != total) {};
+
 	CHECK(gettimeofday(&stop, NULL));
 }
 
@@ -173,57 +182,59 @@ void* workerThread(void *arg)
 
 		if (!thread_pool->alive) {
 			int l, m, k, size, height=in.yp, width=in.xp, depth=in.zp;
-			float* vector_in = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
-			float* vector_ker = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
-			float* vsum = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
-			float zero = 0.000000, sum = 0.000000;
-			__m256 result = _mm256_broadcast_ss(&zero);
+			for (int z=0;z<block->pluto;z++) {
+				float* vector_in = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
+				float* vector_ker = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
+				float* vsum = aligned_alloc(32, sizeof(float)*ARRAY_LENGTH);
+				float zero = 0.000000, sum = 0.000000;
+				__m256 result = _mm256_broadcast_ss(&zero);
 
-			if (ker.size > ARRAY_LENGTH)	size = ARRAY_LENGTH;	
-			else	size = ker.size;
+				if (ker.size > ARRAY_LENGTH)	size = ARRAY_LENGTH;	
+				else	size = ker.size;
 
-			for(l=0;l<ker.size;l++)
-			{
-				for(m=0;m<ker.size;m++)
+				for(l=0;l<ker.size;l++)
 				{
-					if (size == ARRAY_LENGTH) {
-						int sub = ker.size;
-						for(k=0;(sub=(sub-ARRAY_LENGTH))>0;k++)
-						{
-							memcpy(vector_in, &in.matrix[((block->start_dep+l)*in.y*in.x)+((block->start_col+m)*in.x)+block->start_row+k*ARRAY_LENGTH], sizeof(float)*size);
-							memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size+k*ARRAY_LENGTH], sizeof(float)*size);
-							__m256 vin = _mm256_load_ps(vector_in);
-							__m256 vker = _mm256_load_ps(vector_ker);	
-							result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
-							if (sub < ARRAY_LENGTH) break;	
-						}
-						if (sub < ARRAY_LENGTH && sub > 0) {
-							size = sub;
-							memcpy(vector_in, &in.matrix[((block->start_dep+l)*in.y*in.x)+((block->start_col+m)*in.x)+block->start_row], sizeof(float)*size);
+					for(m=0;m<ker.size;m++)
+					{
+						if (size == ARRAY_LENGTH) {
+							int sub = ker.size;
+							for(k=0;(sub=(sub-ARRAY_LENGTH))>0;k++)
+							{
+								memcpy(vector_in, &in.matrix[((block->start_dep[z]+l)*in.y*in.x)+((block->start_col[z]+m)*in.x)+block->start_row[z]+k*ARRAY_LENGTH], sizeof(float)*size);
+								memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size+k*ARRAY_LENGTH], sizeof(float)*size);
+								__m256 vin = _mm256_load_ps(vector_in);
+								__m256 vker = _mm256_load_ps(vector_ker);	
+								result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
+								if (sub < ARRAY_LENGTH) break;	
+							}
+							if (sub < ARRAY_LENGTH && sub > 0) {
+								size = sub;
+								memcpy(vector_in, &in.matrix[((block->start_dep[z]+l)*in.y*in.x)+((block->start_col[z]+m)*in.x)+block->start_row[z]], sizeof(float)*size);
+								memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size], sizeof(float)*size);
+								__m256 vin = _mm256_load_ps(vector_in);
+								__m256 vker = _mm256_load_ps(vector_ker);	
+								result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
+							}
+						} else {
+							memcpy(vector_in, &in.matrix[((block->start_dep[z]+l)*in.y*in.x)+((block->start_col[z]+m)*in.x)+block->start_row[z]], sizeof(float)*size);
 							memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size], sizeof(float)*size);
 							__m256 vin = _mm256_load_ps(vector_in);
 							__m256 vker = _mm256_load_ps(vector_ker);	
 							result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
-						}
-					} else {
-						memcpy(vector_in, &in.matrix[((block->start_dep+l)*in.y*in.x)+((block->start_col+m)*in.x)+block->start_row], sizeof(float)*size);
-						memcpy(vector_ker, &ker.matrix[l*ker.size*ker.size+m*ker.size], sizeof(float)*size);
-						__m256 vin = _mm256_load_ps(vector_in);
-						__m256 vker = _mm256_load_ps(vector_ker);	
-						result = _mm256_add_ps(result, _mm256_mul_ps(vin, vker));
-					}		
+						}		
+					}
 				}
-			}
 
-			_mm256_store_ps(vsum, result);
-			for (m=0;m<ARRAY_LENGTH;m++)
-			{	
-				sum+=vsum[m];
+				_mm256_store_ps(vsum, result);
+				for (m=0;m<ARRAY_LENGTH;m++)
+				{	
+					sum+=vsum[m];
+				}
+				ans[block->num[z]] = sum;
+				pthread_mutex_lock(&lock4);
+				count++;
+				pthread_mutex_unlock(&lock4);
 			}
-			ans[block->num] = sum;
-			pthread_mutex_lock(&lock4);
-			count++;
-			pthread_mutex_unlock(&lock4);
 		}
 	}
 	return NULL;
@@ -269,7 +280,7 @@ int main(int argc, char* argv[])
 		pthread_mutex_init(&lock4, NULL);
 		pthread_cond_init(&signal, NULL);
 		queueInit(&buffer);
-		thread_pool = thread_pool_constructor(3);
+		thread_pool = thread_pool_constructor(7);
 
 		for (i = 0; i < 3; i++)
 		{
@@ -344,5 +355,5 @@ int main(int argc, char* argv[])
 	container_destructor(&in);
 	container_destructor(&out);
 	kernel_destructor(&ker);
-	return 0;
+	return 0;  
 }

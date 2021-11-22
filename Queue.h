@@ -3,13 +3,15 @@
 
 #define TRUE 1
 #define FALSE 0
+#define BLOCK_LENGTH 18
 
 typedef struct _block
 {
-        int start_col;
-        int start_row;
-        int start_dep;
-        int num;
+        int start_col[BLOCK_LENGTH];
+        int start_row[BLOCK_LENGTH];
+        int start_dep[BLOCK_LENGTH];
+        int num[BLOCK_LENGTH];
+	int pluto;
 } Block;
 
 typedef Block Data;
