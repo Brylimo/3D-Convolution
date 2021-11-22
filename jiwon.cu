@@ -3,7 +3,8 @@
 
 #define TILE_SIZE  6
 #define BLOCK_SIZE 8
-#define MAX_KERNEL 5
+#define MAX_KERNEL 3
+#define MASK_WIDTH 3
 
 __constant__ float C_kernel[MAX_KERNEL][MAX_KERNEL][MAX_KERNEL];
 
@@ -57,6 +58,8 @@ int main(int argc, char *argv[]){
 	int input_x, input_y, input_z;
 	int kernel_size;
 	int output_x, output_y, output_z;
+	float time_ms = 0;
+	cudaEvent_t t1, t2;
 
 	if(argc !=4){
 		printf("Usage : ./retry\n");
@@ -113,7 +116,7 @@ int main(int argc, char *argv[]){
 		IN[i] = temp;
 	}
 	for(int i=0;i<MAX_KERNEL*MAX_KERNEL*MAX_KERNEL;i++){
-		if(i<kernel_size
+		//if(i<kernel_size
 		fscanf(fp2, "%f", &temp);
 		kernel[i] = temp;
 	}
@@ -131,14 +134,27 @@ int main(int argc, char *argv[]){
 	dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
 	dim3 dimGrid((input_x-1)/TILE_SIZE+1, (input_y-1)/TILE_SIZE+1, (input_z-1)/TILE_SIZE+1);
 
+
+	cudaEventCreate(&t1);
+	cudaEventCreate(&t2);
+
+	cudaEventRecord(t1, 0);
+
 	Convolution<<<dimGrid,dimBlock>>>(IN_c,OUT_c, input_x, input_y, input_z);
 	cudaMemcpy(OUT, OUT_c, sizeof(float)*output_x*output_y*output_z, cudaMemcpyDeviceToHost);
+
+	cudaEventRecord(t2, 0);
+	cudaEventSynchronize(t2);
+	cudaEventElapsedTime(&time_ms, t1, t2);
+
 	for(int i=0;i<output_x*output_y*output_z;i++){
 		if(abs(OUT[i]-ANS[i])>=0.002f){
 			printf("NOT EQUAL!\n");
 			return 0;
 		}
 	}
+	printf("Execution time for reduce0: %.2f ms\n", time_ms);
+
 
 	free(IN);
 	free(OUT);
