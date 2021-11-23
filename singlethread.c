@@ -11,7 +11,7 @@
   if ((CALL) < 0) {perror (#CALL); exit (EXIT_FAILURE);}
 #define ARRAY_LENGTH 8
 #define ABS(X) ((X) < 0 ? -(X) : (X))
-#define E 0.0001 // need to ask about it
+#define E 0.0001 
 typedef struct __container
 {
 	int zp, yp, xp; // real
@@ -92,7 +92,7 @@ float* conv(Container* in, Kernel* ker)
 				{
 					for(m=0;m<ker->size;m++)
 					{
-						if (size == ARRAY_LENGTH) { // need to check
+						if (size == ARRAY_LENGTH) {
 							int sub = ker->size;
 							for(k=0;(sub=(sub-ARRAY_LENGTH))>0;k++)
 							{
